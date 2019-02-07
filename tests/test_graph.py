@@ -1,4 +1,4 @@
-from graph import Graph, taxidistance
+from graph import Graph, taxidistance, CostedPath
 
 DATA = [
     list(".....................XX......."),
@@ -44,11 +44,37 @@ def test_sample_data():
     for row in output3:
         print(row)
 
+def test_uniform_cost_search():
+    g = Graph()
 
-    for p in g.yen_KSP(start, end):
-        o = g.render_path(p, len(DATA[0]), len(DATA))
-        print()
-        for row in o:
-            print(row)
+    g.edge("C", "D", 3)
+    g.edge("D", "F", 4)
+    g.edge("C", "E", 2)
+    g.edge("E", "D", 1)
+    g.edge("E", "F", 2)
+    g.edge("E", "G", 3)
+    g.edge("F", "G", 2)
+    g.edge("G", "H", 2)
+    g.edge("F", "H", 1)
 
-    assert len(path) == len(path2)
+    assert g.uniform_cost_search("C", "H") == CostedPath(5, ["C", "E", "F", "H"])
+
+
+def test_yen():
+    g = Graph()
+
+    g.edge("C", "D", 3)
+    g.edge("D", "F", 4)
+    g.edge("C", "E", 2)
+    g.edge("E", "D", 1)
+    g.edge("E", "F", 2)
+    g.edge("E", "G", 3)
+    g.edge("F", "G", 2)
+    g.edge("G", "H", 2)
+    g.edge("F", "H", 1)
+
+    paths = g.yen_KSP("C", "H", 3)
+
+    assert paths[0] == CostedPath(5, ["C", "E", "F", "H"])
+    assert paths[1] == CostedPath(7, ["C", "E", "G", "H"])
+    assert paths[2] == CostedPath(8, ["C", "D", "F", "H"])
