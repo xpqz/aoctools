@@ -8,12 +8,16 @@ https://www.redblobgames.com/pathfinding/a-star/introduction.html
 """
 import heapq
 from collections import defaultdict, deque
-from typing import cast, Callable, Dict, Generic, List, Optional, Set, Tuple, TypeVar
+from typing import (
+    cast, overload, Callable, Dict, Generic,
+    List, Optional, Tuple, Union, TypeVar
+)
 from dataclasses import dataclass
 
 T = TypeVar("T")
 Previous = Dict[T, Optional[T]]
 CumulativeCost = Dict[T, int]
+Nodes = List[T]
 
 class GraphException(Exception):
     pass
@@ -21,7 +25,7 @@ class GraphException(Exception):
 @dataclass(eq=True, frozen=True)
 class CostedPath(Generic[T]):
     cost: int
-    path: List[T]
+    path: Nodes
 
 class PriorityQueue(Generic[T]):
     def __init__(self):
@@ -59,9 +63,9 @@ class Graph(Generic[T]):
     def edge(self, start: T, end: T, cost: int = 1) -> None:
         self.edges[start][end] = cost
 
-    def _unwind_path(self, came_from: Previous, start: T, end: T) -> List[T]:
+    def unwind_path(self, came_from: Previous, start: T, end: T) -> Nodes:
         current = end
-        path: List[T] = []
+        path: Nodes = []
 
         while current != start:
             path.append(current)
@@ -75,9 +79,18 @@ class Graph(Generic[T]):
 
         return path
 
-    def breadth_first_search(self, start: T, end: T) -> List[T]:
+
+    @overload
+    def breadth_first_search(self, start: T) -> Previous: ...
+
+    @overload
+    def breadth_first_search(self, start: T, end: T) -> Nodes: ...
+
+    def breadth_first_search(self, start: T, end: T = None) -> Union[Previous, Nodes]:
         """
-        Breadth-first search with early exit. Edge cost not accounted for.
+        Breadth-first search with potential early exit. Edge cost not accounted for.
+        If no `end` node given, the returned dict holds the shortest paths from
+        the start to every other point in the graph.
         """
         frontier = deque([start])
         came_from: Previous = {start: None}
@@ -94,7 +107,10 @@ class Graph(Generic[T]):
                         frontier.append(neighbour)
                         came_from[neighbour] = current
 
-        return self._unwind_path(came_from, start, end)
+        if end is None:
+            return came_from
+
+        return self.unwind_path(came_from, start, end)
 
     def dijkstra(self, start: T, end: T = None) -> Tuple[CumulativeCost, Previous]:
         """
@@ -134,7 +150,7 @@ class Graph(Generic[T]):
         if cost is None:
             return None
 
-        return CostedPath(cost, self._unwind_path(came_from, start, end))
+        return CostedPath(cost, self.unwind_path(came_from, start, end))
 
     def a_star_search(
             self,
@@ -177,7 +193,7 @@ class Graph(Generic[T]):
                         frontier.put(neighbour, priority)
                         came_from[neighbour] = current
 
-        return CostedPath(cost_so_far[end], self._unwind_path(came_from, start, end))
+        return CostedPath(cost_so_far[end], self.unwind_path(came_from, start, end))
 
     def k_shortest_paths(self, source: T, sink: T, K: int = 5) -> List[CostedPath[T]]:
         """
@@ -187,8 +203,10 @@ class Graph(Generic[T]):
         """
         costs, came_from = self.dijkstra(source)  # All paths & costs
 
-        A = [CostedPath(costs[sink], self._unwind_path(came_from, source, sink))]
-        B: List[Tuple[int, List[T]]] = []
+        A: List[CostedPath[T]] = [
+            CostedPath(costs[sink], self.unwind_path(came_from, source, sink))
+        ]
+        B: List[Tuple[int, Nodes]] = []  # heapq
 
         for _k in range(1, K):
             # The spur node ranges from the first node to the neighbour to
