@@ -6,149 +6,105 @@ A lot of this comes from the excellent article
 https://www.redblobgames.com/pathfinding/a-star/introduction.html
 
 """
-from collections import defaultdict, deque
-from dataclasses import dataclass
 import heapq
-import math
-from typing import (
-    cast, Any, Callable, DefaultDict, Dict, Hashable, 
-    Iterable, List, Mapping, Optional, Set, Tuple
-)
+from collections import defaultdict, deque
+from typing import cast, Callable, Dict, Generic, List, Optional, Set, Tuple, TypeVar
+from dataclasses import dataclass
+
+T = TypeVar("T")
+Previous = Dict[T, Optional[T]]
+CumulativeCost = Dict[T, int]
 
 class GraphException(Exception):
     pass
 
-@dataclass
-class CostedPath:
+@dataclass(eq=True, frozen=True)
+class CostedPath(Generic[T]):
     cost: int
-    path: List[Hashable]
+    path: List[T]
 
-class PriorityQueue:
+class PriorityQueue(Generic[T]):
     def __init__(self):
-        self.elements: List[Tuple[int, Hashable]] = []
-    
+        self.elements: List[Tuple[int, T]] = []
+
     def empty(self) -> bool:
         return len(self.elements) == 0
-    
-    def put(self, item: Hashable, priority: int) -> None:
-        heapq.heappush(self.elements, (priority, item))
-    
-    def get(self) -> Hashable:
-        return heapq.heappop(self.elements)[1]
 
-def taxidistance(target: Tuple[int, int], next: Tuple[int, int]) -> int:
+    def put(self, item: T, priority: int) -> None:
+        heapq.heappush(self.elements, (priority, item))
+
+    def get(self) -> T:
+        item = heapq.heappop(self.elements)
+        return item[1]
+
+    def contains(self, item: T) -> bool:
+        return item in self.elements
+
+def taxidistance(target: Tuple[int, int], neighbour: Tuple[int, int]) -> int:
     """
     Common A* heuristic -- the "taxidistance" also known as "Manhattan distance".
     """
-    return abs(next[0]-target[0]) + abs(next[1]-target[1])
+    return abs(neighbour[0]-target[0]) + abs(neighbour[1]-target[1])
 
-def nocost(target: Hashable, next: Hashable) -> int:
+def nocost(_target: T, _neighbour: T) -> int:
     return 0
 
-class Graph:
+class Graph(Generic[T]):
     """
     Simple graph representation. Nodes must be hashable.
     """
     def __init__(self):
         self.edges = defaultdict(dict)
 
-    def edge(self, start: Hashable, end: Hashable, cost: int = 1) -> None:
+    def edge(self, start: T, end: T, cost: int = 1) -> None:
         self.edges[start][end] = cost
 
-    def _unwind_path(self, came_from: Dict[Hashable, Any], start: Hashable, end: Hashable) -> List[Hashable]:
+    def _unwind_path(self, came_from: Previous, start: T, end: T) -> List[T]:
         current = end
-        path: List[Hashable] = []
+        path: List[T] = []
 
         while current != start:
             path.append(current)
             try:
-                current = came_from[current]
+                current = cast(T, came_from[current])
             except KeyError:
-                return []
+                raise GraphException("Invalid path")
 
         path.append(start)
         path.reverse()
 
         return path
 
-    def from_rows(self, data: List[List[str]]) -> Tuple[Tuple[int, int], Tuple[int, int]]:
-        """
-        Primarily for testing -- make a grid-like graph based on a simple string notation.
-        """
-        start: Tuple[int, int] = (0, 0)
-        end: Tuple[int, int] = (0, 0)
-
-        nodes = set()
-         
-        for y, row in enumerate(data):
-            for x, ch in enumerate(row):
-                pos = (x, y)
-                if ch in {".", "S", "T"}:
-                    nodes.add(pos)
-                if ch == "S":
-                    start = pos
-                elif ch == "T":
-                    end = pos
-
-        for node in nodes:
-            (x, y) = cast(Tuple[int, int], node)
-            for n in {(x, y-1), (x-1, y), (x, y+1), (x+1, y)}:
-                if n in nodes:
-                    self.edge((x, y), n)
-                    self.edge(n, (x, y))
-
-        return start, end
-
-    def render_path(self, path: Iterable[Hashable], xsize: int, ysize: int) -> List[str]:
-        """
-        Primarily for testing -- render a path on a grid-like graph based on a simple 
-        string notation.
-        """
-        data: List[str] = []
-        for y in range(ysize):
-            row = ""
-            for x in range(xsize):
-                pos = (x, y)
-                if pos in path:
-                    row += "*"
-                elif pos in self.edges:
-                    row += "."
-                else:
-                    row += "X"
-            data.append(row)
-
-        return data
-
-    def breadth_first_search(self, start: Hashable, end: Hashable) -> List[Hashable]:
+    def breadth_first_search(self, start: T, end: T) -> List[T]:
         """
         Breadth-first search with early exit. Edge cost not accounted for.
         """
         frontier = deque([start])
-        came_from: Dict[Hashable, Any] = {start: None}
+        came_from: Previous = {start: None}
 
         while frontier:
             current = frontier.popleft()
 
             if current == end:
                 break
-            
+
             if current in self.edges:
-                for (next, _) in self.edges[current].items():
-                    if next not in came_from:
-                        frontier.append(next)
-                        came_from[next] = current
+                for neighbour in self.edges[current].keys():
+                    if neighbour not in came_from:
+                        frontier.append(neighbour)
+                        came_from[neighbour] = current
 
         return self._unwind_path(came_from, start, end)
 
-    def dijkstra(self, start: Hashable, end: Hashable = None) -> Tuple[Dict[Hashable, int], Dict[Hashable, Any]]:
+    def dijkstra(self, start: T, end: T = None) -> Tuple[CumulativeCost, Previous]:
         """
-        Dijkstra's uniform cost search finds the lowest-cost path from start to end. Returns the 
+        Dijkstra's uniform cost search finds the lowest-cost path from start to end. Returns the
         raw cost and path sequence dicts for further processing.
         """
-        frontier = PriorityQueue()
+        frontier = PriorityQueue[T]()
         frontier.put(start, 0)
-        came_from: Dict[Hashable, Any] = {start: None}
-        cost_so_far: Dict[Hashable, int] = {start: 0}
+        came_from: Previous = {start: None}
+        cost_so_far: CumulativeCost = {start: 0}
 
         while not frontier.empty():
             current = frontier.get()
@@ -157,19 +113,20 @@ class Graph:
                 break
 
             if current in self.edges:
-                for (next, cost) in self.edges[current].items():
+                for (neighbour, cost) in self.edges[current].items():
                     new_cost = cost_so_far[current] + cost
-                    if next not in cost_so_far or new_cost < cost_so_far[next]:
-                        cost_so_far[next] = new_cost
+                    if neighbour not in cost_so_far or new_cost < cost_so_far[neighbour]:
+                        cost_so_far[neighbour] = new_cost
                         priority = new_cost
-                        frontier.put(next, priority)
-                        came_from[next] = current
+                        frontier.put(neighbour, priority)
+                        came_from[neighbour] = current
 
         return cost_so_far, came_from
 
-    def uniform_cost_search(self, start: Hashable, end: Hashable) -> Optional[CostedPath]:
+    def uniform_cost_search(self, start: T, end: T) -> Optional[CostedPath[T]]:
         """
         Dijkstra's with cost and unwound path for the start->end
+        TODO: check that it works for no path found.
         """
         cost_so_far, came_from = self.dijkstra(start, end)
 
@@ -180,19 +137,19 @@ class Graph:
         return CostedPath(cost, self._unwind_path(came_from, start, end))
 
     def a_star_search(
-            self, 
-            start: Hashable, 
-            end: Hashable, 
-            heuristic: Callable[[Hashable, Hashable], int] = nocost
-    ) -> List[Hashable]:
+            self,
+            start: T,
+            end: T,
+            heuristic: Callable[[T, T], int] = nocost
+    ) -> CostedPath[T]:
         """
         A* search. The heuristic should be a function that gives a "guess"
-        of how well travelling from a to b takes you towards the target. 
-        This could for example be the "manhattan distance" if the graph is 
+        of how well travelling from a to b takes you towards the target.
+        This could for example be the "manhattan distance" if the graph is
         looking like a grid:
 
-        def taxidistance(target, next):
-            return abs(next[0]-target[0]) + abs(next[1]-target[1])
+        def taxidistance(target, neighbour):
+            return abs(neighbour[0]-target[0]) + abs(neighbour[1]-target[1])
 
         As long as the given heuristic does not over-estimate the cost,
         A* converges on the lowest-cost path whilst exploring fewer nodes
@@ -200,10 +157,10 @@ class Graph:
 
         With no heuristic cost, A* is equivalent to Dijkstra
         """
-        frontier = PriorityQueue()
+        frontier = PriorityQueue[T]()
         frontier.put(start, 0)
-        came_from: Dict[Hashable, Any] = {start: None}
-        cost_so_far = {start: 0}
+        came_from: Previous = {start: None}
+        cost_so_far: CumulativeCost = {start: 0}
 
         while not frontier.empty():
             current = frontier.get()
@@ -212,33 +169,35 @@ class Graph:
                 break
 
             if current in self.edges:
-                for (next, cost) in self.edges[current].items():
+                for (neighbour, cost) in self.edges[current].items():
                     new_cost = cost_so_far[current] + cost
-                    if next not in cost_so_far or new_cost < cost_so_far[next]:
-                        cost_so_far[next] = new_cost
-                        priority = new_cost + heuristic(end, next)
-                        frontier.put(next, priority)
-                        came_from[next] = current
+                    if neighbour not in cost_so_far or new_cost < cost_so_far[neighbour]:
+                        cost_so_far[neighbour] = new_cost
+                        priority = new_cost + heuristic(end, neighbour)
+                        frontier.put(neighbour, priority)
+                        came_from[neighbour] = current
 
-        return self._unwind_path(came_from, start, end)
+        return CostedPath(cost_so_far[end], self._unwind_path(came_from, start, end))
 
-    def yen_KSP(self, source: Hashable, sink: Hashable, K: int = 5) -> List[CostedPath]:
+    def k_shortest_paths(self, source: T, sink: T, K: int = 5) -> List[CostedPath[T]]:
         """
+        This is Yen's k-sp algorithm, as described on Wikipedia:
+
         https://en.wikipedia.org/wiki/Yen%27s_algorithm
         """
-        costs, came_from = self.dijkstra(source)
-        
+        costs, came_from = self.dijkstra(source)  # All paths & costs
+
         A = [CostedPath(costs[sink], self._unwind_path(came_from, source, sink))]
-        B: List[CostedPath] = []
+        B: List[Tuple[int, List[T]]] = []
 
         for _k in range(1, K):
-            # The spur node ranges from the first node to the next to 
+            # The spur node ranges from the first node to the neighbour to
             # last node in the previous k-shortest path.
             for i in range(len(A[-1].path)-1):
                 # Spur node is retrieved from the previous k-shortest path, k − 1.
                 spur = A[-1].path[i]
 
-                # root_path is the sequence of nodes from the source to the spur node 
+                # root_path is the sequence of nodes from the source to the spur node
                 # of the previous k-shortest path.
                 root_path = A[-1].path[:i+1]
 
@@ -246,13 +205,13 @@ class Graph:
                 for p in A:
                     path = p.path
                     if len(path) > i and root_path == path[:i+1]:
-                        # Remove the links that are part of the previous shortest paths 
+                        # Remove the links that are part of the previous shortest paths
                         # which share the same root path.
                         if path[i] in self.edges:
                             cost = self.edges[path[i]].pop(path[i+1], None)
                             if cost is not None:
                                 removed_edges.append((path[i], path[i+1], cost))
-               
+
                 # Calculate the spur path from the spur node to the sink.
                 costed_spur_path = self.uniform_cost_search(spur, sink)
 
@@ -261,30 +220,23 @@ class Graph:
                     full_path = root_path[:-1] + costed_spur_path.path
                     full_cost = costed_spur_path.cost + costs[spur]
 
-                    # Add the potential k-shortest path to the "heap"
-                    item = CostedPath(full_cost, full_path)
+                    # Add the potential k-shortest path to the heap
+                    item = (full_cost, full_path)
                     if item not in B:
-                        B.append(item)
+                        heapq.heappush(B, item)
 
-                    # Add back the edges and nodes that were removed from the graph.              
+                    # Add back the edges and nodes that were removed from the graph.
                     for (a, b, cost) in removed_edges:
                         self.edge(a, b, cost)
 
             if not B:
                 # This handles the case of there being no spur paths, or no spur paths left.
-                # This could happen if the spur paths have already been exhausted (added to A), 
-                # or there are no spur paths at all - such as when both the source and sink vertices 
+                # This could happen if the spur paths have already been exhausted (added to A),
+                # or there are no spur paths at all - such as when both the source and sink vertices
                 # lie along a "dead end".
                 break
 
-            # Sort the potential k-shortest paths by cost.
-            B.sort(key=lambda x: x.cost)
-
-            # The lowest cost path becomes the k-shortest path.
-            A.append(B[0])
-
-            B.pop(0)
+            # The lowest cost path becomes the kth-shortest path.
+            A.append(CostedPath(*heapq.heappop(B)))
 
         return A
-
-
